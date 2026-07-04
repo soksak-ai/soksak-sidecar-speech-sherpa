@@ -4,21 +4,23 @@
 //   청크 줄 {id,ok,chunk,sampleRate,pcmBase64(s16le)} N개 → 종결 줄 {id,ok,done:true}.
 // 모델은 동봉하지 않는다 — --model-dir 로 사용자가 지정(라이선스는 모델 문서 참조).
 // M2a 범위 = op:info/tts. ASR/VAD 는 M2b 에서 같은 계약에 op 를 더한다.
+mod backend;
 mod engine;
+mod supertonic;
 
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
+use backend::Backend;
 use base64::Engine as _;
-use engine::{SynthChunkSink, TtsEngine};
 use serde::Deserialize;
 use serde_json::json;
 
 const SPEC: &str = "soksak-sidecar-speech-spec@1";
 
 struct Args {
-    engine: String, // vits | kokoro
+    engine: String, // vits | kokoro | supertonic
     model_dir: PathBuf,
 }
 
@@ -33,7 +35,7 @@ fn parse_args() -> Result<Args> {
                 model_dir = Some(PathBuf::from(it.next().context("--model-dir value missing")?))
             }
             "--help" | "-h" => {
-                eprintln!("usage: soksak-sidecar-speech-sherpa --model-dir <dir> [--engine vits|kokoro]");
+                eprintln!("usage: soksak-sidecar-speech-sherpa --model-dir <dir> [--engine vits|kokoro|supertonic]");
                 std::process::exit(0);
             }
             other => return Err(anyhow!("unknown argument: {other}")),
@@ -80,6 +82,7 @@ struct Req {
     id: u64,
     op: String,
     text: Option<String>,
+    lang: Option<String>, // supertonic 계열용(2글자) — sherpa 모델은 무시
     sid: Option<i32>,
     speed: Option<f32>,
     stream: Option<bool>,
@@ -94,10 +97,13 @@ fn write_line(out: &mut impl Write, v: &serde_json::Value) -> Result<()> {
 
 fn main() -> Result<()> {
     let args = parse_args()?;
-    let (tts, model) = TtsEngine::open(&args.engine, &args.model_dir)?;
+    let (mut tts, model) = Backend::open(&args.engine, &args.model_dir)?;
     eprintln!(
         "[soksak-sidecar-speech-sherpa] ready engine={} model={} sr={} speakers={}",
-        args.engine, model, tts.sample_rate, tts.num_speakers
+        args.engine,
+        model,
+        tts.sample_rate(),
+        tts.num_speakers()
     );
 
     let b64 = base64::engine::general_purpose::STANDARD;
@@ -122,7 +128,8 @@ fn main() -> Result<()> {
                 &json!({
                     "id": req.id, "ok": true, "spec": SPEC,
                     "engine": args.engine, "model": model,
-                    "sampleRate": tts.sample_rate, "numSpeakers": tts.num_speakers,
+                    "sampleRate": tts.sample_rate(), "numSpeakers": tts.num_speakers(),
+                    "styles": tts.style_names(),
                     "ops": ["info", "tts"], "stream": true,
                 }),
             )?,
@@ -132,14 +139,21 @@ fn main() -> Result<()> {
                     write_line(&mut out, &json!({"id":req.id,"ok":false,"message":"text required"}))?;
                     continue;
                 }
+                let lang = req.lang.unwrap_or_else(|| "en".to_string());
                 let sid = req.sid.unwrap_or(0);
                 let speed = req.speed.unwrap_or(1.0);
-                if req.stream.unwrap_or(false) {
-                    // 청크 스트리밍 — 합성되는 대로 s16le PCM 을 흘린다(첫 소리 지연 최소화).
-                    let mut k = 0u32;
-                    let mut chunk_err: Option<anyhow::Error> = None;
-                    let sr = tts.sample_rate;
+                let streaming = req.stream.unwrap_or(false);
+                let sr = tts.sample_rate();
+                // 스트리밍: 합성되는 대로 s16le PCM 청크. 비스트리밍: 청크를 모아 통짜 WAV.
+                let mut k = 0u32;
+                let mut whole: Vec<f32> = Vec::new();
+                let mut chunk_err: Option<anyhow::Error> = None;
+                let r = {
                     let mut on_chunk = |samples: &[f32]| -> bool {
+                        if !streaming {
+                            whole.extend_from_slice(samples);
+                            return true;
+                        }
                         k += 1;
                         let v = json!({
                             "id": req.id, "ok": true, "chunk": k,
@@ -153,40 +167,32 @@ fn main() -> Result<()> {
                             }
                         }
                     };
-                    let mut sink = SynthChunkSink { on_chunk: &mut on_chunk };
-                    let r = tts.generate_streamed(&text, sid, speed, &mut sink);
-                    if let Some(e) = chunk_err {
-                        return Err(e); // stdout 소실 = 부모 사망 — 종료
-                    }
-                    match r {
-                        Ok(total) => write_line(
+                    tts.generate_streamed(&text, &lang, sid, speed, &mut on_chunk)
+                };
+                if let Some(e) = chunk_err {
+                    return Err(e); // stdout 소실 = 부모 사망 — 종료
+                }
+                match (streaming, r) {
+                    (true, Ok(total)) => write_line(
+                        &mut out,
+                        &json!({"id":req.id,"ok":true,"done":true,"chunks":k,"numSamples":total,"sampleRate":sr}),
+                    )?,
+                    (false, Ok(_)) => {
+                        let wav = wav_encode(&whole, sr);
+                        write_line(
                             &mut out,
-                            &json!({"id":req.id,"ok":true,"done":true,"chunks":k,"numSamples":total,"sampleRate":sr}),
-                        )?,
-                        Err(e) => write_line(
-                            &mut out,
-                            &json!({"id":req.id,"ok":false,"done":true,"message":format!("tts failed: {e}")}),
-                        )?,
+                            &json!({
+                                "id": req.id, "ok": true,
+                                "sampleRate": sr,
+                                "numSamples": whole.len(),
+                                "wavBase64": b64.encode(&wav),
+                            }),
+                        )?;
                     }
-                } else {
-                    match tts.generate(&text, sid, speed) {
-                        Ok(samples) => {
-                            let wav = wav_encode(&samples, tts.sample_rate);
-                            write_line(
-                                &mut out,
-                                &json!({
-                                    "id": req.id, "ok": true,
-                                    "sampleRate": tts.sample_rate,
-                                    "numSamples": samples.len(),
-                                    "wavBase64": b64.encode(&wav),
-                                }),
-                            )?;
-                        }
-                        Err(e) => write_line(
-                            &mut out,
-                            &json!({"id":req.id,"ok":false,"message":format!("tts failed: {e}")}),
-                        )?,
-                    }
+                    (_, Err(e)) => write_line(
+                        &mut out,
+                        &json!({"id":req.id,"ok":false,"done":true,"message":format!("tts failed: {e}")}),
+                    )?,
                 }
             }
             other => write_line(
