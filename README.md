@@ -1,6 +1,6 @@
 # soksak-sidecar-speech-sherpa
 
-Speech service sidecar for soksak — sherpa-onnx TTS behind a stdio JSON-lines contract (`soksak-sidecar-speech-spec@1`).
+Speech service sidecar for soksak — Supertonic / sherpa-onnx (VITS·Kokoro) TTS behind a stdio JSON-lines contract (`soksak-sidecar-speech-spec@1`).
 
 Korean: [README.ko.md](README.ko.md)
 
@@ -11,10 +11,10 @@ One JSON request per line; one JSON reply per line. `op:"tts"` with `stream:true
 ## Usage
 
 ```sh
-soksak-sidecar-speech-sherpa --model-dir <dir> [--engine vits|kokoro]
+soksak-sidecar-speech-sherpa --model-dir <dir> [--engine vits|kokoro|supertonic]
 ```
 
-The model directory is auto-scanned for sherpa conventions (`*.onnx`, `tokens.txt`, `lexicon.txt`, `espeak-ng-data/`, `dict/`, `voices.bin`).
+Sherpa engines auto-scan the model dir (`*.onnx`, `tokens.txt`, `lexicon.txt`, `espeak-ng-data/`, `dict/`, `voices.bin`). The `supertonic` engine expects `onnx/` + `voice_styles/` (speaker id selects a style; requests carry `lang`, and Supertonic 3 renders inline `<laugh>`/`<breath>`/`<sigh>` tags).
 
 ## Models are not bundled
 

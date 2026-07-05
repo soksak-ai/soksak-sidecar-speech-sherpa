@@ -1,6 +1,6 @@
 # soksak-sidecar-speech-sherpa
 
-soksak 음성 service 사이드카 — sherpa-onnx TTS 를 stdio JSON-lines 계약(`soksak-sidecar-speech-spec@1`) 뒤에 둔다.
+soksak 음성 service 사이드카 — Supertonic / sherpa-onnx(VITS·Kokoro) TTS 를 stdio JSON-lines 계약(`soksak-sidecar-speech-spec@1`) 뒤에 둔다.
 
 English: [README.md](README.md)
 
@@ -11,10 +11,10 @@ English: [README.md](README.md)
 ## 사용
 
 ```sh
-soksak-sidecar-speech-sherpa --model-dir <dir> [--engine vits|kokoro]
+soksak-sidecar-speech-sherpa --model-dir <dir> [--engine vits|kokoro|supertonic]
 ```
 
-모델 디렉토리는 sherpa 관례(`*.onnx`, `tokens.txt`, `lexicon.txt`, `espeak-ng-data/`, `dict/`, `voices.bin`)로 자동 탐지한다.
+sherpa 엔진은 모델 디렉토리를 관례(`*.onnx`, `tokens.txt`, `lexicon.txt`, `espeak-ng-data/`, `dict/`, `voices.bin`)로 자동 탐지한다. `supertonic` 엔진은 `onnx/` + `voice_styles/` 구조를 기대한다(화자 번호=스타일 선택, 요청에 `lang` 동반, Supertonic 3 는 인라인 `<laugh>`/`<breath>`/`<sigh>` 태그를 발성으로 렌더).
 
 ## 모델은 동봉하지 않는다
 
