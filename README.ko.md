@@ -1,6 +1,6 @@
 # soksak-sidecar-speech-sherpa
 
-soksak 음성 service 사이드카 — Supertonic / sherpa-onnx(VITS·Kokoro) TTS 를 stdio JSON-lines 계약(`soksak-sidecar-speech-spec@1`) 뒤에 둔다.
+soksak 음성 service 사이드카 — Supertonic / sherpa-onnx(VITS·Kokoro) TTS 를 stdio JSON-lines 계약(`soksak-spec-sidecar-speech@1`) 뒤에 둔다.
 
 English: [README.md](README.md)
 

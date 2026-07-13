@@ -1,5 +1,5 @@
 // soksak-sidecar-speech-sherpa — sherpa-onnx 음성 service 사이드카(stdio JSON-lines).
-// 계약 = soksak-sidecar-speech-spec@1:
+// 계약 = soksak-spec-sidecar-speech@1:
 //   요청 {id,op,...} 1줄 → 응답 1줄. 단 op:tts + stream:true 는 합성 진행에 따라
 //   청크 줄 {id,ok,chunk,sampleRate,pcmBase64(s16le)} N개 → 종결 줄 {id,ok,done:true}.
 // 모델은 동봉하지 않는다 — --model-dir 로 사용자가 지정(라이선스는 모델 문서 참조).
@@ -17,7 +17,7 @@ use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::json;
 
-const SPEC: &str = "soksak-sidecar-speech-spec@1";
+const SPEC: &str = "soksak-spec-sidecar-speech@1";
 
 struct Args {
     engine: String, // vits | kokoro | supertonic
