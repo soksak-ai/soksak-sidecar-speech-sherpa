@@ -1,9 +1,12 @@
 # 릴리즈 — main 에서 수동 dispatch 시 다섯 플랫폼 타깃마다 사이드카 dist 아카이브를 빌드해
 # owner-immutable GitHub Release 자산으로 올린다. 각 타깃은 그 타깃의 네이티브 러너에서 빌드하므로
-# 크로스 링커가 필요 없다(sherpa-rs-sys download-binaries 가 러너 플랫폼의 프리빌드 네이티브 라이브러리를
-# 받는다). 버전/태그는 소유 manifest(Cargo.toml)에서 유도한다. dist 스테이징은 stage.sh 단일 진실
-# (바이너리 + sherpa-onnx/onnxruntime 공유 라이브러리 동봉). 소비측(플러그인 manifest
-# sidecars[].reach.fetch.url[platform] + sha256[platform])이 자산을 집는다.
+# 크로스 링커가 필요 없다. dist 스테이징은 stage.sh 단일 진실(바이너리 + sherpa-onnx/onnxruntime 1.17.1).
+#
+# ort(Supertonic 엔진)의 onnxruntime: ort 2.0.0-rc.12 는 api-22(=onnxruntime 1.22)로 고정한다 — 1.24 는
+# Intel Mac(osx-x86_64) 프리빌드를 pyke·MS 양쪽이 끊었지만 1.18~1.22 는 배포하기 때문이다. ort 는
+# load-dynamic 이라 pyke CDN 프리빌드에 기대지 않고, 이 워크플로우가 Microsoft 공식 onnxruntime 1.22 를
+# 타깃별로 받아 dist 에 동봉한다(libonnxruntime-ort.*). 런타임에 main.rs 가 ORT_DYLIB_PATH 로 가리킨다.
+# sherpa 는 자체 1.17.1 을 링크한다 — 두 self-contained onnxruntime 은 표준(dyld 이단계 네임스페이스 격리).
 name: release
 
 on:
@@ -16,6 +19,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  ORT_ONNXRUNTIME_VERSION: "1.22.0"
+
 jobs:
   build:
     if: github.ref == 'refs/heads/main'
@@ -25,14 +31,19 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             runner: macos-15
+            onnx: onnxruntime-osx-arm64-1.22.0.tgz
           - target: x86_64-apple-darwin
             runner: macos-15-intel
+            onnx: onnxruntime-osx-x86_64-1.22.0.tgz
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
+            onnx: onnxruntime-linux-aarch64-1.22.0.tgz
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-24.04
+            onnx: onnxruntime-linux-x64-1.22.0.tgz
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
+            onnx: onnxruntime-win-x64-1.22.0.zip
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -47,18 +58,47 @@ jobs:
           case "$ver" in ''|*[!0-9.]*) echo "invalid version: $ver" >&2; exit 1;; esac
           echo "version=$ver" >> "$GITHUB_OUTPUT"
       - name: Build the release binary for this target
-        run: cargo build --release
+        run: cargo build --locked --release
       - name: Stage the dist for this OS
         shell: bash
         run: ./stage.sh dist
+      - name: Bundle the ort ONNX Runtime (Microsoft 1.22, supports all five targets)
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_ONNXRUNTIME_VERSION}/${{ matrix.onnx }}"
+          echo "fetch $url"
+          curl -fsSL "$url" -o ort-onnx.archive
+          mkdir -p ort-onnx
+          case "${{ matrix.onnx }}" in
+            *.zip) unzip -q ort-onnx.archive -d ort-onnx ;;
+            *)     tar -xzf ort-onnx.archive -C ort-onnx ;;
+          esac
+          case "$(uname -s)" in
+            MINGW* | MSYS* | CYGWIN*)
+              main="$(find ort-onnx -name 'onnxruntime.dll' -type f | head -1)"
+              cp "$main" dist/onnxruntime-ort.dll
+              find ort-onnx -name 'onnxruntime_providers_*.dll' -type f -exec cp {} dist/ \; 2>/dev/null || true
+              test -f dist/onnxruntime-ort.dll ;;
+            Linux)
+              main="$(find ort-onnx -name 'libonnxruntime.so*' -type f | head -1)"
+              cp "$main" dist/libonnxruntime-ort.so
+              find ort-onnx -name 'libonnxruntime_providers_*.so*' -type f -exec cp {} dist/ \; 2>/dev/null || true
+              test -f dist/libonnxruntime-ort.so ;;
+            Darwin)
+              main="$(find ort-onnx -name 'libonnxruntime.*.dylib' -type f | head -1)"
+              cp "$main" dist/libonnxruntime-ort.dylib
+              find ort-onnx -name 'libonnxruntime_providers_*.dylib' -type f -exec cp {} dist/ \; 2>/dev/null || true
+              test -f dist/libonnxruntime-ort.dylib ;;
+          esac
+          echo "== dist ==" && ls -la dist
       - id: archive
         shell: bash
         run: |
           ver="${{ steps.identity.outputs.version }}"
           out="soksak-sidecar-speech-sherpa-$ver-${{ matrix.target }}.tar.gz"
-          # stage.sh 는 실파일만 복사하므로 심링크가 없다 — 어느 OS 든 평범한 tar 로 자족적이다.
+          # stage.sh 는 실파일만 복사하고 onnxruntime 도 실파일 — 심링크 없어 어느 OS 든 평범한 tar 로 자족적이다.
           tar -czf "$out" -C dist .
-          # sha256 도구는 러너마다 다르다 — linux/windows(git-bash)=sha256sum, macOS=shasum. 형식 동일.
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$out" | tee "$out.sha256"
           else

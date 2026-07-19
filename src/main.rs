@@ -95,7 +95,34 @@ fn write_line(out: &mut impl Write, v: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+// ort 전용 onnxruntime 파일명(플랫폼별) — sherpa 자체 onnxruntime(libonnxruntime.1.17.1.*)과 뚜렷이
+// 구분된다. release.yml 이 이 이름으로 Microsoft onnxruntime 1.22 를 바이너리 형제에 동봉한다.
+const ORT_ONNXRUNTIME_FILE: &str = if cfg!(windows) {
+    "onnxruntime-ort.dll"
+} else if cfg!(target_os = "macos") {
+    "libonnxruntime-ort.dylib"
+} else {
+    "libonnxruntime-ort.so"
+};
+
+// load-dynamic: ort 는 onnxruntime 를 런타임에 dlopen 한다(빌드타임 프리빌드 불요 → Intel macOS 포함 전
+// 타깃 빌드). 바이너리 형제로 동봉된 ort 전용 onnxruntime(api-22=1.22, sherpa 의 1.17.1 과 별개 인스턴스)을
+// ORT_DYLIB_PATH 로 가리킨다. 두 인스턴스는 dyld 이단계 네임스페이스로 격리된다.
+fn point_ort_at_bundled_onnxruntime() {
+    if std::env::var_os("ORT_DYLIB_PATH").is_some() {
+        return; // 명시 지정 우선(개발/시스템 onnxruntime 오버라이드).
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    let Some(dir) = exe.parent() else { return };
+    let candidate = dir.join(ORT_ONNXRUNTIME_FILE);
+    if candidate.is_file() {
+        // SAFETY: 단일 스레드 시작 시점(ort Session 생성·스레드 스폰 전)에만 호출한다.
+        unsafe { std::env::set_var("ORT_DYLIB_PATH", &candidate) };
+    }
+}
+
 fn main() -> Result<()> {
+    point_ort_at_bundled_onnxruntime();
     let args = parse_args()?;
     let (mut tts, model) = Backend::open(&args.engine, &args.model_dir)?;
     eprintln!(
