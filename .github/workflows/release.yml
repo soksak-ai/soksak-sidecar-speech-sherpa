@@ -1,35 +1,109 @@
-# 릴리즈 — tag(v*) push 시 사이드카 dist 아카이브를 빌드해 GitHub Release 자산으로 올린다.
-# 소비측(플러그인 manifest sidecars[].reach.fetch = 이 자산 URL + sha256 핀)은 코어에 구현·검증 완료.
-# 버전업 = Cargo.toml version + tag 하나.
+# 릴리즈 — main 에서 수동 dispatch 시 다섯 플랫폼 타깃마다 사이드카 dist 아카이브를 빌드해
+# owner-immutable GitHub Release 자산으로 올린다. 각 타깃은 그 타깃의 네이티브 러너에서 빌드하므로
+# 크로스 링커가 필요 없다(sherpa-rs-sys download-binaries 가 러너 플랫폼의 프리빌드 네이티브 라이브러리를
+# 받는다). 버전/태그는 소유 manifest(Cargo.toml)에서 유도한다. dist 스테이징은 stage.sh 단일 진실
+# (바이너리 + sherpa-onnx/onnxruntime 공유 라이브러리 동봉). 소비측(플러그인 manifest
+# sidecars[].reach.fetch.url[platform] + sha256[platform])이 자산을 집는다.
 name: release
+
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
-  release-darwin-arm64:
-    runs-on: macos-14
-    permissions:
-      contents: write
+  build:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Build
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: "1.96.0"
+          targets: ${{ matrix.target }}
+      - id: identity
+        shell: bash
+        run: |
+          ver="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          case "$ver" in ''|*[!0-9.]*) echo "invalid version: $ver" >&2; exit 1;; esac
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+      - name: Build the release binary for this target
         run: cargo build --release
-      - name: Stage dist
-        run: ./stage.sh
-      - name: Archive (+sha256)
-        id: archive
+      - name: Stage the dist for this OS
+        shell: bash
+        run: ./stage.sh dist
+      - id: archive
+        shell: bash
         run: |
-          ver="${GITHUB_REF_NAME#v}"
-          out="soksak-sidecar-speech-sherpa-$ver-darwin-arm64.tar.gz"
-          /usr/bin/tar -czLf "$out" -C bin .
-          shasum -a 256 "$out" | tee "$out.sha256"
+          ver="${{ steps.identity.outputs.version }}"
+          out="soksak-sidecar-speech-sherpa-$ver-${{ matrix.target }}.tar.gz"
+          # stage.sh 는 실파일만 복사하므로 심링크가 없다 — 어느 OS 든 평범한 tar 로 자족적이다.
+          tar -czf "$out" -C dist .
+          # sha256 도구는 러너마다 다르다 — linux/windows(git-bash)=sha256sum, macOS=shasum. 형식 동일.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$out" | tee "$out.sha256"
+          else
+            shasum -a 256 "$out" | tee "$out.sha256"
+          fi
           echo "asset=$out" >> "$GITHUB_OUTPUT"
-      - name: Upload release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dist-${{ matrix.target }}
+          path: |
+            ${{ steps.archive.outputs.asset }}
+            ${{ steps.archive.outputs.asset }}.sha256
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - id: identity
         run: |
-          gh release create "$GITHUB_REF_NAME" --generate-notes \
-            "${{ steps.archive.outputs.asset }}" \
-            "${{ steps.archive.outputs.asset }}.sha256"
+          ver="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          case "$ver" in ''|*[!0-9.]*) echo "invalid version: $ver" >&2; exit 1;; esac
+          echo "tag=v$ver" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: Create least-privilege release token
+        id: release-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.SOKSAK_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.SOKSAK_RELEASE_PRIVATE_KEY }}
+          permission-administration: read
+          permission-contents: write
+      - name: Publish through owner-enforced immutable releases
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+        run: |
+          enforced="$(gh api "repos/${{ github.repository }}/immutable-releases" --jq '.enabled and .enforced_by_owner')"
+          test "$enforced" = "true" || { echo "owner-enforced immutable releases must be enabled before tagging" >&2; exit 1; }
+          tag="${{ steps.identity.outputs.tag }}"
+          assets="$(find dist -type f \( -name '*.tar.gz' -o -name '*.sha256' \) | sort)"
+          test "$(printf '%s\n' "$assets" | grep -c '\.tar\.gz$')" -eq 5 || { echo "expected 5 platform archives, got:" >&2; echo "$assets" >&2; exit 1; }
+          gh release create "$tag" --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "$tag" --generate-notes $assets

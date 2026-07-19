@@ -1,6 +1,6 @@
 # soksak-sidecar-speech-sherpa
 
-Speech service sidecar for soksak — Supertonic / sherpa-onnx (VITS·Kokoro) TTS behind a stdio JSON-lines contract (`soksak-spec-sidecar-speech@1`).
+Speech service sidecar for soksak — Supertonic / sherpa-onnx (VITS·Kokoro) TTS behind a stdio JSON-lines contract (`soksak-spec-sidecar-speech`).
 
 Korean: [README.ko.md](README.ko.md)
 

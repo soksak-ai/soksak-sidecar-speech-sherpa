@@ -5,7 +5,7 @@ Licensing is per-unit: this unit (soksak-sidecar-speech-sherpa) ships the
 sherpa-onnx speech engine and its ONNX Runtime backend, and therefore carries
 sherpa-onnx's Apache-2.0 license (see LICENSE) plus the notices below. A
 different engine unit implementing the same contract
-(soksak-spec-sidecar-speech@1) carries its own engine's license — no license
+(soksak-spec-sidecar-speech) carries its own engine's license — no license
 crosses between units. Speech models are not bundled; each model carries its own
 license (see README).
 
