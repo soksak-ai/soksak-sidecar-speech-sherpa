@@ -3,7 +3,7 @@
 # 크로스 링커가 필요 없다. dist 스테이징은 stage.sh 단일 진실(바이너리 + sherpa-onnx/onnxruntime 1.17.1).
 #
 # ort(Supertonic 엔진)의 onnxruntime: 타깃마다 그 타깃이 받을 수 있는 가장 새 버전을 쓴다(Cargo.toml
-# per-target api-N 과 정합). ort 2.0.0-rc.12 바인딩 상한이 api-24 라 현대 4타깃 = onnxruntime 1.24.4,
+# per-target api-N 과 정합). ort 2.0.0-rc.12 바인딩 상한이 api-24 라 현대 4타깃 = onnxruntime 1.27.1,
 # Intel Mac 은 osx-x86_64 프리빌드가 있는 마지막인 1.23.2. ort 는 load-dynamic 이라 pyke CDN 프리빌드에
 # 기대지 않고, 이 워크플로우가 Microsoft 공식 onnxruntime 을 타깃별 버전으로 받아 dist 에 동봉한다
 # (libonnxruntime-ort.*). 런타임에 main.rs 가 ORT_DYLIB_PATH 로 가리킨다. sherpa 는 자체 1.17.1 을
@@ -25,30 +25,30 @@ jobs:
     if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
-      # onnxruntime 버전은 타깃마다 그 타깃이 받을 수 있는 가장 새 것 — 현대 4타깃은 ort 상한인 1.24.4,
+      # onnxruntime 버전은 타깃마다 그 타깃이 받을 수 있는 가장 새 것 — 현대 4타깃은 ort 상한인 1.27.1,
       # Intel Mac 은 osx-x86_64 프리빌드가 있는 마지막인 1.23.2. Cargo.toml 의 per-target api-N 과 정합.
       matrix:
         include:
           - target: aarch64-apple-darwin
             runner: macos-15
-            onnx: onnxruntime-osx-arm64-1.24.4.tgz
-            onnx_ver: "1.24.4"
+            onnx: onnxruntime-osx-arm64-1.27.1.tgz
+            onnx_ver: "1.27.1"
           - target: x86_64-apple-darwin
             runner: macos-15-intel
             onnx: onnxruntime-osx-x86_64-1.23.2.tgz
             onnx_ver: "1.23.2"
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
-            onnx: onnxruntime-linux-aarch64-1.24.4.tgz
-            onnx_ver: "1.24.4"
+            onnx: onnxruntime-linux-aarch64-1.27.1.tgz
+            onnx_ver: "1.27.1"
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-24.04
-            onnx: onnxruntime-linux-x64-1.24.4.tgz
-            onnx_ver: "1.24.4"
+            onnx: onnxruntime-linux-x64-1.27.1.tgz
+            onnx_ver: "1.27.1"
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
-            onnx: onnxruntime-win-x64-1.24.4.zip
-            onnx_ver: "1.24.4"
+            onnx: onnxruntime-win-x64-1.27.1.zip
+            onnx_ver: "1.27.1"
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -67,7 +67,7 @@ jobs:
       - name: Stage the dist for this OS
         shell: bash
         run: ./stage.sh dist
-      - name: Bundle the ort ONNX Runtime (Microsoft 1.22, supports all five targets)
+      - name: Bundle the ort ONNX Runtime (Microsoft, newest this target can take)
         shell: bash
         run: |
           set -euo pipefail
