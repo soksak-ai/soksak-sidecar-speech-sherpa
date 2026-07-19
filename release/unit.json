@@ -1,0 +1,10 @@
+{
+  "id": "soksak-sidecar-speech-sherpa",
+  "version": "0.0.4",
+  "releaseTag": "v0.0.4",
+  "repository": "https://github.com/soksak-ai/soksak-sidecar-speech-sherpa",
+  "interface": {
+    "id": "soksak-spec-sidecar-speech",
+    "version": "0.0.4"
+  }
+}
