@@ -1,20 +1,12 @@
 [package]
 name = "soksak-sidecar-speech-sherpa"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 
 [dependencies]
 anyhow = "1.0.103"
 base64 = "0.22.1"
 ndarray = "0.17"
-# onnxruntime 버전 규칙: 이 사이드카가 링크하는 onnxruntime 은 다섯 타깃 전부(Intel Mac osx-x86_64 포함)를
-# 지원해야 한다. onnxruntime 은 1.24 부터 Intel Mac 프리빌드를 끊었으므로(pyke·MS 양쪽) 그 이하 최신인
-# 1.22(=api-22)를 상한으로 고정한다 — 1.18~1.22 는 osx-x86_64 를 배포한다. ort 는 컴파일타임 프리빌드
-# (pyke CDN, Intel Mac 부재)에 기대지 않고 load-dynamic 으로 Microsoft 공식 onnxruntime 1.22 를 런타임
-# 로드한다(per-target 동봉, ORT_DYLIB_PATH=main.rs). sherpa-rs-sys 는 자체 onnxruntime 1.17.1 을 링크한다
-# — 두 -sys 크레이트가 각자 self-contained onnxruntime 을 갖는 건 표준(두 인스턴스는 dyld 이단계 네임스페이스로
-# 격리). api-24 default 로의 rc.12 드리프트(=1.24 강제)가 Intel Mac 을 잃은 근원이라 api-22 로 못박는다.
-ort = { version = "2.0.0-rc.7", default-features = false, features = ["ndarray", "load-dynamic", "api-22"] }
 rand = "0.8"
 rand_distr = "0.4"
 rayon = "1.12.0"
@@ -24,3 +16,16 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 sherpa-rs-sys = { version = "0.6.8", features = ["tts", "download-binaries"] }
 unicode-normalization = "0.1.25"
+
+# ort(Supertonic 엔진의 ONNX 런타임)는 타깃마다 그 타깃이 받을 수 있는 가장 새 onnxruntime 을 쓴다 —
+# 죽어가는 Intel Mac 하나 때문에 현대 플랫폼을 옛 버전에 묶지 않는다. ort 2.0.0-rc.12 의 바인딩 상한은
+# api-24(=onnxruntime 1.24)이고, onnxruntime 은 1.24 부터 Intel Mac(osx-x86_64) 프리빌드를 끊었다.
+# → 현대 4타깃 = api-24(onnxruntime 1.24.4, ort 최대), Intel Mac = api-23(onnxruntime 1.23.2, 프리빌드
+# 마지막). ort 는 load-dynamic 이라 컴파일타임 프리빌드 불요, release.yml 이 Microsoft 공식 onnxruntime
+# 을 타깃별 버전으로 받아 동봉하고 main.rs 가 ORT_DYLIB_PATH 로 지목한다. sherpa 는 자체 1.17.1 을
+# 링크한다(두 self-contained onnxruntime 은 dyld 이단계 네임스페이스로 격리 — 표준).
+[target.'cfg(all(target_os = "macos", target_arch = "x86_64"))'.dependencies]
+ort = { version = "2.0.0-rc.7", default-features = false, features = ["ndarray", "load-dynamic", "api-23"] }
+
+[target.'cfg(not(all(target_os = "macos", target_arch = "x86_64")))'.dependencies]
+ort = { version = "2.0.0-rc.7", default-features = false, features = ["ndarray", "load-dynamic", "api-24"] }
